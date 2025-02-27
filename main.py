@@ -7,6 +7,8 @@ import json, time
 from uvicorn import Config, Server
 from pathlib import Path
 import runpod
+import asyncio
+import aiohttp
 
 # Initializing variables
 model_data = {
@@ -17,45 +19,14 @@ model_data = {
 configs = []
 
 def run(config_path: str, host: str = "127.0.0.1", port: int = 3000):
-    if config_path:
-        config_dict = load_config(config_path)  # function to load your config file
-
-        for config in config_dict["models"]:
-            config_model = {
-                "url": f"https://api.runpod.ai/v2/{config['endpoint']}",
-                "api_key": config_dict["api_key"],
-                "model": config["model"],
-                **({"timeout": config["timeout"]} if config.get("timeout") is not None else {}),
-                **({"use_openai_format": config["use_openai_format"]} if config.get("use_openai_format") is not None else {}),
-                **({"batch_size": config["batch_size"]} if config.get("batch_size") is not None else {}),
-            }
-            configs.append(ApiConfig(**config_model))
-        for api in configs: print(api)
-
-        model_data["data"] = [{"id": config["model"], 
-            "object": "model", 
-            "created": int(time.time()), 
-            "owned_by": "organization-owner"} for config in config_dict["models"]]
-        config = Config(
-            app=app,
-            host=config_dict.get("host", host),
-            port=config_dict.get("port", port),
-            log_level=config_dict.get("log_level", "info"),
-        )
-    else:
-        config = Config(
-            app=app,
-            host=host,
-            port=port,
-            log_level="info",
-        )
+    config = Config(
+        app=app,
+        host=host,
+        port=port,
+        log_level="info",
+    )
     server = Server(config=config)
     server.run()
-
-def load_config(config_path):
-    config_path = Path(args.config)
-    with open(config_path) as f:
-        return json.load(f)
 
 # Function to get configuration by model name
 def get_config_by_model(model_name):
@@ -150,14 +121,23 @@ async def request_prompt(request: Request):
         model = data.get("model")
         if not model:
             return JSONResponse(status_code=400, content={"detail ": "Missing model in request."})
-        payload = data.get("prompt")[0]
+        # payload = data.get("prompt")[0]
         api = get_config_by_model(model)
-        
-        params_dict = params.dict()
-        params_dict.update(data)
-        new_params = Params(**params_dict)
-        runpod: RunpodServerlessCompletion = RunpodServerlessCompletion(api=api, params=new_params)
-        return get_synchronous(runpod, payload)
+        async with aiohttp.ClientSession() as session:
+            endpoint = runpod.AsyncioEndpoint(api.endpoint_id, session)
+            job: runpod.AsyncioJob = await endpoint.run(data)
+
+            while True:
+                status = await job.status()
+                print(f"Current job status: {status}")
+                if status == "COMPLETED":
+                    output = await job.output()
+                    print("Job output:", output)
+                    return output
+                elif status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
+                    raise HTTPException(status_code=500, detail=f"Job failed with status: {status}")
+                else:
+                    await asyncio.sleep(1)  # Wait for 3 seconds before polling again
         
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
@@ -295,18 +275,15 @@ if __name__ == "__main__":
     parser.add_argument("--port", help="Port", type=int, default=3000)
     args = parser.parse_args()
 
-    if args.config:
-        run(args.config)
-    else:
-        runpod.api_key = args.api_key
-        endpoints = runpod.get_endpoints()
-        configs.extend([ApiConfig(**{
-            "url": f"https://api.runpod.ai/v2/{e["id"]}",
-            "api_key": args.api_key,
-            "model": e["name"],
-            **({"timeout": args.timeout} if args.timeout is not None else {}),
-            **({"use_openai_format": args.use_openai_format} if args.use_openai_format is not None else {}),
-            **({"batch_size": args.batch_size} if args.batch_size is not None else {}),
-        }) for e in endpoints])
-        run(None, host=args.host, port=args.port)
+    runpod.api_key = args.api_key
+    endpoints = runpod.get_endpoints()
+    configs.extend([ApiConfig(**{
+        "endpoint_id": e["id"],
+        "api_key": args.api_key,
+        "model": e["name"],
+        **({"timeout": args.timeout} if args.timeout is not None else {}),
+        **({"use_openai_format": args.use_openai_format} if args.use_openai_format is not None else {}),
+        **({"batch_size": args.batch_size} if args.batch_size is not None else {}),
+    }) for e in endpoints])
+    run(None, host=args.host, port=args.port)
 

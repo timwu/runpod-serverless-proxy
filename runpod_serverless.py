@@ -8,7 +8,7 @@ from datetime import datetime
 
 # Pydantic model for API configuration
 class ApiConfig(BaseModel):
-    url: str
+    endpoint_id: str
     api_key: str
     model: str
     use_openai_format: int = 1
