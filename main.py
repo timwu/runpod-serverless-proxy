@@ -114,7 +114,7 @@ async def request_chat(request: Request):
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 # API endpoint for completions
-@router.post('/completions')
+@router.post('/v1/completions')
 async def request_prompt(request: Request):
     try:
         data = await request.json()
@@ -143,7 +143,7 @@ async def request_prompt(request: Request):
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 # API endpoint for completions
-@router.post('/embeddings')
+@router.post('/v1/embeddings')
 async def request_embeddings(request: Request):
     try:
         data = await request.json()
@@ -240,7 +240,7 @@ app = FastAPI()
 app.include_router(router)
 
 # Endpoint to list all models
-@app.get("/models")
+@app.get("/v1/models")
 async def list_models():
     return  {
         "object": "list",
