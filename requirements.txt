@@ -1,0 +1,6 @@
+fastapi[all]
+pydantic
+aiohttp
+requests
+uvicorn[standard]
+runpod

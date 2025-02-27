@@ -1,10 +1,12 @@
 # Importing necessary libraries
+import os
 from fastapi import FastAPI, APIRouter, Request, HTTPException
 from runpod_serverless import ApiConfig, RunpodServerlessCompletion, Params, RunpodServerlessEmbedding
 from fastapi.responses import StreamingResponse, JSONResponse
 import json, time
 from uvicorn import Config, Server
 from pathlib import Path
+import runpod
 
 # Initializing variables
 model_data = {
@@ -260,7 +262,15 @@ app.include_router(router)
 # Endpoint to list all models
 @app.get("/models")
 async def list_models():
-    return model_data
+    return  {
+        "object": "list",
+        "data": [
+            {"id": config.model, 
+            "object": "model", 
+            "created": int(time.time()), 
+            "owned_by": "organization-owner"} for config in configs
+        ]
+    }
 
 # Endpoint to get a specific model
 @app.get("/models/{model_id}")
@@ -276,26 +286,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", help="Path to the config file", type=str, default=None)
     parser.add_argument("-e", "--endpoint", help="API endpoint", type=str, default=None)
-    parser.add_argument("-k", "--api_key", help="API key", type=str, default=None)
+    parser.add_argument("-k", "--api_key", help="API key", type=str, default=os.environ.get("RUNPOD_API_KEY"))
     parser.add_argument("-m", "--model", help="Model", type=str, default=None)
     parser.add_argument("-t", "--timeout", help="Timeout", type=int, default=None)
     parser.add_argument("-o", "--use_openai_format", help="Use OpenAI format", type=bool, default=None)
     parser.add_argument("-b", "--batch_size", help="Batch size", type=int, default=None)
-    parser.add_argument("--host", help="Host", type=str, default="127.0.0.1")
+    parser.add_argument("--host", help="Host", type=str, default="0.0.0.0")
     parser.add_argument("--port", help="Port", type=int, default=3000)
     args = parser.parse_args()
 
     if args.config:
         run(args.config)
     else:
-        config_model = {
-            "url": f"https://api.runpod.ai/v2/{args.endpoint}",
+        runpod.api_key = args.api_key
+        endpoints = runpod.get_endpoints()
+        configs.extend([ApiConfig(**{
+            "url": f"https://api.runpod.ai/v2/{e["id"]}",
             "api_key": args.api_key,
-            "model": args.model,
+            "model": e["name"],
             **({"timeout": args.timeout} if args.timeout is not None else {}),
             **({"use_openai_format": args.use_openai_format} if args.use_openai_format is not None else {}),
             **({"batch_size": args.batch_size} if args.batch_size is not None else {}),
-        }
-        configs.append(ApiConfig(**config_model))
+        }) for e in endpoints])
         run(None, host=args.host, port=args.port)
 
