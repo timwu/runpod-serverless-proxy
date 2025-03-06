@@ -9,6 +9,9 @@ from pathlib import Path
 import runpod
 import asyncio
 import aiohttp
+from cryptography.fernet import Fernet
+
+
 
 # Initializing variables
 model_data = {
@@ -17,6 +20,11 @@ model_data = {
 }
 
 configs = []
+
+
+f = None
+if "KEY" in os.environ:
+    f = Fernet(os.environ["KEY"])
 
 def run(config_path: str, host: str = "127.0.0.1", port: int = 3000):
     config = Config(
@@ -125,6 +133,12 @@ async def request_prompt(request: Request):
         api = get_config_by_model(model)
         async with aiohttp.ClientSession() as session:
             endpoint = runpod.AsyncioEndpoint(api.endpoint_id, session)
+            
+            # encrypt if needed
+            if f:
+                data["e_prompt"] = f.encrypt(data.get("prompt").encode()).decode()
+                del data["prompt"]
+
             job: runpod.AsyncioJob = await endpoint.run(data)
 
             while True:
@@ -132,6 +146,13 @@ async def request_prompt(request: Request):
                 print(f"Current job status: {status}")
                 if status == "COMPLETED":
                     output = await job.output()
+                    
+                    # decrypt if needed
+                    for choice in output["choices"]:
+                        if "e_text" in choice:
+                            choice["text"] = f.decrypt(choice["e_text"].encode()).decode()
+                            del choice["e_text"]
+
                     print("Job output:", output)
                     return output
                 elif status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
