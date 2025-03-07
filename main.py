@@ -42,6 +42,13 @@ def get_config_by_model(model_name):
         if config.model == model_name:
             return config
         
+def get_model_endpoint_id(model_name):
+    endpoings = runpod.get_endpoints()
+    for endpoint in endpoings:
+        if endpoint["name"] == model_name:
+            return endpoint["id"]
+    return None
+
 # Function to format the response data
 def format_response(data):
     try:
@@ -130,9 +137,9 @@ async def request_prompt(request: Request):
         if not model:
             return JSONResponse(status_code=400, content={"detail ": "Missing model in request."})
         # payload = data.get("prompt")[0]
-        api = get_config_by_model(model)
+        endpoint_id = get_model_endpoint_id(model)
         async with aiohttp.ClientSession() as session:
-            endpoint = runpod.AsyncioEndpoint(api.endpoint_id, session)
+            endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
             
             # encrypt if needed
             if f:
@@ -266,10 +273,10 @@ async def list_models():
     return  {
         "object": "list",
         "data": [
-            {"id": config.model, 
+            {"id": endpoint["name"], 
             "object": "model", 
             "created": int(time.time()), 
-            "owned_by": "organization-owner"} for config in configs
+            "owned_by": "organization-owner"} for endpoint in runpod.get_endpoints()
         ]
     }
 
