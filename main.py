@@ -129,6 +129,7 @@ async def request_chat(request: Request):
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 # API endpoint for completions
+@router.post('/v1/chat/completions')
 @router.post('/v1/completions')
 async def request_prompt(request: Request):
     try:
@@ -143,8 +144,7 @@ async def request_prompt(request: Request):
             
             # encrypt if needed
             if f:
-                data["e_prompt"] = f.encrypt(data.get("prompt").encode()).decode()
-                del data["prompt"]
+                data = {"enc": f.encrypt(json.dumps(data).encode()).decode()}
 
             job: runpod.AsyncioJob = await endpoint.run(data)
 
@@ -155,10 +155,8 @@ async def request_prompt(request: Request):
                     output = await job.output()
                     
                     # decrypt if needed
-                    for choice in output["choices"]:
-                        if "e_text" in choice:
-                            choice["text"] = f.decrypt(choice["e_text"].encode()).decode()
-                            del choice["e_text"]
+                    if "enc" in output:
+                        output = json.loads(f.decrypt(output["enc"].encode()).decode())
 
                     print("Job output:", output)
                     return output
