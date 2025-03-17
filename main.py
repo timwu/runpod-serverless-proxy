@@ -142,6 +142,8 @@ async def request_prompt(request: Request):
         async with aiohttp.ClientSession() as session:
             endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
             
+            print(f"Request:\n{json.dumps(data, indent=4)}")
+
             # encrypt if needed
             if f:
                 data = {"enc": f.encrypt(json.dumps(data).encode()).decode()}
@@ -158,7 +160,8 @@ async def request_prompt(request: Request):
                     if "enc" in output:
                         output = json.loads(f.decrypt(output["enc"].encode()).decode())
 
-                    print("Job output:", output)
+                    print(f"Response:\n{json.dumps(output, indent=4)}")
+
                     return output
                 elif status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
                     raise HTTPException(status_code=500, detail=f"Job failed with status: {status}")
