@@ -128,6 +128,12 @@ async def request_chat(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
+async def formatted_streaming_response(job: runpod.AsyncioJob):
+    async for chunk in job.stream():
+        if "enc" in chunk:
+            chunk = json.loads(f.decrypt(chunk["enc"].encode()).decode())
+        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+
 # API endpoint for completions
 @router.post('/v1/chat/completions')
 @router.post('/v1/completions')
@@ -139,34 +145,59 @@ async def request_prompt(request: Request):
             return JSONResponse(status_code=400, content={"detail ": "Missing model in request."})
         # payload = data.get("prompt")[0]
         endpoint_id = get_model_endpoint_id(model)
-        async with aiohttp.ClientSession() as session:
-            endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
-            
-            print(f"Request:\n{json.dumps(data, indent=4)}")
 
-            # encrypt if needed
-            if f:
-                data = {"enc": f.encrypt(json.dumps(data).encode()).decode()}
+        print(f"Request:\n{json.dumps(data, indent=4)}")
 
-            job: runpod.AsyncioJob = await endpoint.run(data)
+        stream = data.get("stream", False)
 
-            while True:
-                status = await job.status()
-                print(f"Current job status: {status}")
-                if status == "COMPLETED":
-                    output = await job.output()
+        # encrypt if needed
+        if f:
+            data = {"enc": f.encrypt(json.dumps(data).encode()).decode()}
+
+        if stream:
+            async def streamed_response():
+                async with aiohttp.ClientSession() as session:
+                    endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
+                    job: runpod.AsyncioJob = await endpoint.run(data)
+                    async for chunk in job.stream():
+                        if "enc" in chunk:
+                            chunk = json.loads(f.decrypt(chunk["enc"].encode()).decode())
+                        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
                     
-                    # decrypt if needed
-                    if "enc" in output:
-                        output = json.loads(f.decrypt(output["enc"].encode()).decode())
+                    # double-check the status
+                    job_state = await job._fetch_job()
+                    status = job_state["status"]
+                    print(f"Current job status: {status}")
+                    if status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
+                        message = job_state.get("error", f"job failed with status: {status}")
+                        error = {"error": {"message": message}}
+                        yield f"data: {json.dumps(error)}\n\n".encode("utf-8")
 
-                    print(f"Response:\n{json.dumps(output, indent=4)}")
+            return StreamingResponse(content=streamed_response(), media_type="text/event-stream")
+        else:
+            async with aiohttp.ClientSession() as session:
+                endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
 
-                    return output
-                elif status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
-                    raise HTTPException(status_code=500, detail=f"Job failed with status: {status}")
-                else:
-                    await asyncio.sleep(1)  # Wait for 3 seconds before polling again
+                job: runpod.AsyncioJob = await endpoint.run(data)
+
+                while True:
+                    status = await job.status()
+                    print(f"Current job status: {status}")
+                    if status == "COMPLETED":
+                        output = await job.output()
+                        output = output[0]
+                        
+                        # decrypt if needed
+                        if "enc" in output:
+                            output = json.loads(f.decrypt(output["enc"].encode()).decode())
+
+                        print(f"Response:\n{json.dumps(output, indent=4)}")
+
+                        return output
+                    elif status in ["FAILED", "CANCELLED", "TIMED_OUT"]:
+                        raise HTTPException(status_code=500, detail=f"Job failed with status: {status}")
+                    else:
+                        await asyncio.sleep(1)  # Wait for 3 seconds before polling again
         
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
