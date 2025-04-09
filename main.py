@@ -2,6 +2,7 @@
 import os
 from fastapi import FastAPI, APIRouter, Request, HTTPException
 from runpod_serverless import ApiConfig, RunpodServerlessCompletion, Params, RunpodServerlessEmbedding
+from runpod.endpoint.helpers import FINAL_STATES
 from fastapi.responses import StreamingResponse, JSONResponse
 import json, time
 from uvicorn import Config, Server
@@ -128,11 +129,17 @@ async def request_chat(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
-async def formatted_streaming_response(job: runpod.AsyncioJob):
-    async for chunk in job.stream():
-        if "enc" in chunk:
-            chunk = json.loads(f.decrypt(chunk["enc"].encode()).decode())
-        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+async def stream_job(job: runpod.AsyncioJob):
+    while True:
+        stream_partial = await job._fetch_job(source="stream")
+        if (
+            stream_partial["status"] not in FINAL_STATES
+            or len(stream_partial.get("stream", [])) > 0
+        ):
+            for chunk in stream_partial.get("stream", []):
+                yield chunk["output"]
+        elif stream_partial["status"] in FINAL_STATES:
+            break
 
 # API endpoint for completions
 @router.post('/v1/chat/completions')
@@ -159,7 +166,7 @@ async def request_prompt(request: Request):
                 async with aiohttp.ClientSession() as session:
                     endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
                     job: runpod.AsyncioJob = await endpoint.run(data)
-                    async for chunk in job.stream():
+                    async for chunk in stream_job(job):
                         if "enc" in chunk:
                             chunk = json.loads(f.decrypt(chunk["enc"].encode()).decode())
                         yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
@@ -186,7 +193,7 @@ async def request_prompt(request: Request):
                     if status == "COMPLETED":
                         output = await job.output()
                         output = output[0]
-                        
+
                         # decrypt if needed
                         if "enc" in output:
                             output = json.loads(f.decrypt(output["enc"].encode()).decode())
