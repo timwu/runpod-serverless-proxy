@@ -167,9 +167,15 @@ async def request_prompt(request: Request):
                     endpoint = runpod.AsyncioEndpoint(endpoint_id, session)
                     job: runpod.AsyncioJob = await endpoint.run(data)
                     async for chunk in stream_job(job):
+                        
                         if "enc" in chunk:
                             chunk = json.loads(f.decrypt(chunk["enc"].encode()).decode())
-                        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+                        
+                        if "batch" in chunk:
+                            for c in chunk["batch"]:
+                                yield f"data: {json.dumps(c)}\n\n".encode("utf-8")
+                        else:
+                            yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
                     
                     # double-check the status
                     job_state = await job._fetch_job()
